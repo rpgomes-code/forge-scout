@@ -7,27 +7,35 @@ import type {
 	ProgressEvent,
 } from "./types.ts";
 
-const LISTING_URL = "https://www.outsystems.com/forge/list-asset";
-const DETAIL_URL = "https://www.outsystems.com/forge/component-overview";
+/** Forge's public sitemap — single XML file listing every component URL. */
+const SITEMAP_URL = "https://www.outsystems.com/forge/sitemap.xml";
 
-/** Default listing sort. `most-popular` covers our high-value rows first. */
-const DEFAULT_SORT = "most-popular";
+const DETAIL_URL_BASE = "https://www.outsystems.com/forge/component-overview";
 
-/** Default politeness delay between requests. */
+/** Default politeness delay between detail-page fetches. */
 const DEFAULT_DELAY_MS = 1000;
 
-interface ListingEntry {
+interface SitemapEntry {
 	id: number;
 	slug: string;
-	/** `data-release` from the listing card, e.g. "10 May 2026". */
-	releaseDateText: string | null;
 }
 
 /**
- * Scrapes `outsystems.com/forge` HTML directly. The Forge has no first-party
- * API; the listing pages embed enough structured data (component cards with
- * `data-*` attributes and stable URL slugs) to enumerate components, then
- * each detail page exposes the metadata fields the schema cares about.
+ * Scrapes `outsystems.com/forge`. Enumeration of components uses the public
+ * `/forge/sitemap.xml` (which is ~8.5k entries of plain XML), so we sidestep
+ * the JS-loaded listing pages entirely. Each component's detail page is then
+ * fetched as plain HTML and parsed with cheerio for the metadata the schema
+ * cares about.
+ *
+ * Why sitemap and not the JS listing:
+ * - `/forge/list-asset` only ever renders the top ~17 components, even
+ *   under a headless browser scrolling to the bottom — there's no "load
+ *   more" mechanic in the DOM.
+ * - The sitemap gives us every component URL + slug deterministically.
+ *
+ * The trade-off is we lose any "most popular first" ordering — the sitemap
+ * is lexicographic on the URL. For demo/dev scrapes that's fine; for prod
+ * we'd shuffle or sort by some other heuristic.
  */
 export class ScrapeForgeSource implements ForgeSource {
 	async *fetchAll(opts: FetchAllOptions): AsyncIterable<ForgeComponentPayload> {
@@ -35,79 +43,57 @@ export class ScrapeForgeSource implements ForgeSource {
 		const delayMs = opts.delayMs ?? DEFAULT_DELAY_MS;
 		const progress = opts.onProgress ?? noop;
 
-		const seen = new Set<number>();
+		const entries = await this.fetchSitemapEntries();
+		progress({
+			type: "listing",
+			page: 1,
+			collected: entries.length,
+		});
+
 		let yielded = 0;
+		for (const entry of entries) {
+			if (yielded >= limit) break;
 
-		for (let page = 1; yielded < limit; page++) {
-			const entries = await this.fetchListingPage(page);
-			if (entries.length === 0) break; // ran out of components
-
-			progress({ type: "listing", page, collected: entries.length });
-
-			for (const entry of entries) {
-				if (yielded >= limit) break;
-				if (seen.has(entry.id)) continue;
-				seen.add(entry.id);
-
-				progress({ type: "detail", id: entry.id, slug: entry.slug });
-
-				try {
-					const detail = await this.fetchDetailPage(entry);
-					yielded++;
-					yield detail;
-				} catch (err) {
-					progress({
-						type: "warn",
-						message: `detail fetch failed for ${entry.id}/${entry.slug}: ${
-							err instanceof Error ? err.message : String(err)
-						}`,
-					});
-				}
-
-				if (yielded < limit) await sleep(delayMs);
+			progress({ type: "detail", id: entry.id, slug: entry.slug });
+			try {
+				const detail = await this.fetchDetailPage(entry);
+				yielded++;
+				yield detail;
+			} catch (err) {
+				progress({
+					type: "warn",
+					message: `detail fetch failed for ${entry.id}/${entry.slug}: ${
+						err instanceof Error ? err.message : String(err)
+					}`,
+				});
 			}
+
+			if (yielded < limit) await sleep(delayMs);
 		}
 	}
 
-	private async fetchListingPage(page: number): Promise<Array<ListingEntry>> {
-		const url = `${LISTING_URL}?q=&t=&s=${DEFAULT_SORT}&pi=${page}`;
-		const html = await fetchText(url);
-		const $ = cheerio.load(html);
+	private async fetchSitemapEntries(): Promise<Array<SitemapEntry>> {
+		const xml = await fetchText(SITEMAP_URL);
+		const pattern = /forge\/component-overview\/(\d+)\/([^<\s?#]+)/g;
+		const seen = new Set<number>();
+		const entries: Array<SitemapEntry> = [];
 
-		// Component links look like
-		//   https://www.outsystems.com/forge/component-overview/{id}/{slug}
-		const found = new Map<number, ListingEntry>();
-		$("a[href*='/forge/component-overview/']").each((_, el) => {
-			const $el = $(el);
-			const href = $el.attr("href");
-			if (!href) return;
-			const match = href.match(/\/forge\/component-overview\/(\d+)\/([^/?#]+)/);
-			if (!match) return;
+		for (const match of xml.matchAll(pattern)) {
 			const id = Number(match[1]);
-			const slug = match[2];
-			if (Number.isFinite(id) && !found.has(id)) {
-				found.set(id, {
-					id,
-					slug,
-					releaseDateText: $el.attr("data-release") ?? null,
-				});
-			}
-		});
+			if (!Number.isFinite(id) || seen.has(id)) continue;
+			seen.add(id);
+			entries.push({ id, slug: match[2] });
+		}
 
-		return Array.from(found.values());
+		return entries;
 	}
 
 	private async fetchDetailPage(
-		entry: ListingEntry,
+		entry: SitemapEntry,
 	): Promise<ForgeComponentPayload> {
-		const url = `${DETAIL_URL}/${entry.id}/${entry.slug}`;
+		const url = `${DETAIL_URL_BASE}/${entry.id}/${entry.slug}`;
 		const html = await fetchText(url);
 		const $ = cheerio.load(html);
-
-		// Final slug may differ from the listing slug — Forge redirects to the
-		// canonical one (e.g. `data-grid` → `outsystems-data-grid-o11`). We
-		// keep the listing slug since we already have it; if anything diverges
-		// the next scrape will reconcile.
 
 		const name = textOf($, "h1, .component-title h2, .component-title h1")
 			.split("\n")[0]
@@ -122,32 +108,21 @@ export class ScrapeForgeSource implements ForgeSource {
 			textOf($, "span[id$='wtDownloads'], span[id$='_wtDownloads']"),
 		);
 
-		const platform = extractPlatforms(html);
-		const badges = extractBadges(html);
-		const license = extractLicense($);
-		const category = extractCategory($);
-		const author = extractAuthor($);
-		const rating = extractRating($);
-		const lastUpdated =
-			parseReleaseDate(entry.releaseDateText) ?? extractLastUpdated($);
-		const githubUrl = extractGithubUrl(html);
-		const tags = extractTags($);
-
 		return {
 			id: entry.id,
 			slug: entry.slug,
 			name: name || entry.slug,
 			description,
-			category,
-			author,
-			rating,
+			category: extractCategory($),
+			author: extractAuthor($),
+			rating: extractRating($),
 			downloads: downloads ?? 0,
-			platform,
-			license,
-			badges,
-			githubUrl,
-			tags,
-			lastUpdated,
+			platform: extractPlatforms(html),
+			license: extractLicense($),
+			badges: extractBadges(html),
+			githubUrl: extractGithubUrl(html),
+			tags: extractTags($),
+			lastUpdated: extractLastUpdated(html),
 		};
 	}
 }
@@ -163,7 +138,6 @@ function noop(_event: ProgressEvent): void {}
 function textOf($: CheerioAPI, selector: string): string {
 	const el = $(selector).first();
 	if (el.length === 0) return "";
-	// meta tags carry value in content attribute
 	if (el.is("meta")) return el.attr("content")?.trim() ?? "";
 	return el.text().replace(/\s+/g, " ").trim();
 }
@@ -178,7 +152,6 @@ function parseIntFromText(text: string | null | undefined): number | null {
 
 function extractPlatforms(html: string): Array<string> {
 	const platforms = new Set<string>();
-	// Forge platform tags appear as "OutSystems 11", "ODC", "O11" depending on UI
 	if (/outsystems\s*11|\bO11\b/i.test(html)) platforms.add("O11");
 	if (/\bODC\b/i.test(html)) platforms.add("ODC");
 	return Array.from(platforms);
@@ -193,13 +166,10 @@ function extractBadges(html: string): Array<string> {
 }
 
 function extractLicense($: CheerioAPI): string | null {
-	// License section header is "License (version)"; the value typically
-	// follows in a nearby block.
 	let license: string | null = null;
 	$("span:contains('License')").each((_, el) => {
 		const block = $(el).closest("div, section, article");
 		const text = block.text().replace(/\s+/g, " ").trim();
-		// Match SPDX-style identifiers commonly used on Forge.
 		const m = text.match(
 			/\b(MIT|BSD-3-Clause|BSD-2-Clause|Apache-2\.0|GPL-2\.0|GPL-3\.0|LGPL-3\.0|MPL-2\.0|EPL-2\.0|Proprietary)\b/,
 		);
@@ -209,22 +179,18 @@ function extractLicense($: CheerioAPI): string | null {
 }
 
 function extractCategory($: CheerioAPI): string | null {
-	// Category appears below a "Category" label.
 	const cat = $("span:contains('Category')").first().parent().next();
 	const text = cat.text().replace(/\s+/g, " ").trim();
 	return text || null;
 }
 
 function extractAuthor($: CheerioAPI): string | null {
-	// Author is the link under `.component-title__owner`.
 	const a = $(".component-title__owner a, .component-title__owner").first();
 	const text = a.text().replace(/\s+/g, " ").trim();
 	return text || null;
 }
 
 function extractRating($: CheerioAPI): number | null {
-	// Rating widget exposes a numeric score nearby. Look for the first
-	// number in `.rating-size-m` neighbourhood.
 	const ratingEl = $(".rating-size-m, .stars-rating").first();
 	const text = `${ratingEl.text()} ${ratingEl.parent().text()}`;
 	const m = text.match(/(\d(?:\.\d{1,2})?)\s*\/?\s*5?/);
@@ -233,21 +199,23 @@ function extractRating($: CheerioAPI): number | null {
 	return Number.isFinite(n) && n >= 0 && n <= 5 ? n : null;
 }
 
-function extractLastUpdated($: CheerioAPI): Date | null {
-	// Fallback: look for a `data-release` attribute somewhere on the page.
-	return parseReleaseDate($("[data-release]").first().attr("data-release"));
-}
-
-function parseReleaseDate(text: string | null | undefined): Date | null {
-	if (!text) return null;
-	const d = new Date(text);
+/**
+ * Extract the release date from the detail page header. The page renders
+ * "Uploaded on <DD MMM[ YYYY]>" near the title — we match that pattern
+ * directly. We deliberately avoid the page's `data-release` attributes
+ * because the "Suggested components" sidebar carries the same attribute
+ * and would have us picking the wrong row's date.
+ */
+function extractLastUpdated(html: string): Date | null {
+	const m = html.match(/Uploaded on (\d{1,2}\s+[A-Za-z]+(?:\s+\d{4})?)/);
+	if (!m) return null;
+	const d = new Date(m[1]);
 	return Number.isFinite(d.getTime()) ? d : null;
 }
 
 function extractGithubUrl(html: string): string | null {
 	const match = html.match(/https?:\/\/github\.com\/[\w.-]+\/[\w.-]+/i);
 	if (!match) return null;
-	// Trim any trailing punctuation captured.
 	return match[0].replace(/[.,;:!?)\]}'"]+$/, "");
 }
 
