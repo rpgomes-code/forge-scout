@@ -1,9 +1,12 @@
 import {
 	infiniteQueryOptions,
+	queryOptions,
 	useSuspenseInfiniteQuery,
+	useSuspenseQuery,
 } from "@tanstack/react-query";
 import {
 	type ForgeCursor,
+	getForgeComponent,
 	type SearchForgeParams,
 	searchForgeComponents,
 } from "#/server/forge/queries.ts";
@@ -50,6 +53,16 @@ export const forgeInfiniteSearchOptions = (
 		getNextPageParam: (lastPage) => lastPage.nextCursor,
 	});
 
+/**
+ * Single-component query options. Used by the `/component/$id` route loader
+ * to ensure SSR has data, and by the detail component to read it back.
+ */
+export const forgeDetailOptions = (id: number) =>
+	queryOptions({
+		queryKey: forgeKeys.detail(id),
+		queryFn: () => getForgeComponent({ data: { id } }),
+	});
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Custom hooks
 // ─────────────────────────────────────────────────────────────────────────────
@@ -60,4 +73,14 @@ export const forgeInfiniteSearchOptions = (
  */
 export function useForgeInfiniteSearch(filters: ForgeListFilters, limit = 15) {
 	return useSuspenseInfiniteQuery(forgeInfiniteSearchOptions(filters, limit));
+}
+
+/**
+ * Suspending detail hook. The route loader guarantees non-null data by the
+ * time this runs (it throws notFound() on missing rows), but the underlying
+ * query type still includes `null` — callers should still narrow if they
+ * use this outside the route's render tree.
+ */
+export function useForgeDetail(id: number) {
+	return useSuspenseQuery(forgeDetailOptions(id));
 }
