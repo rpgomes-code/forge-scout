@@ -118,11 +118,11 @@ export class ScrapeForgeSource implements ForgeSource {
 			rating: extractRating($),
 			downloads: downloads ?? 0,
 			platform: extractPlatforms(html),
-			license: extractLicense($),
+			license: extractLicense(html, $),
 			badges: extractBadges(html),
 			githubUrl: extractGithubUrl(html),
 			tags: extractTags($),
-			lastUpdated: extractLastUpdated(html),
+			lastUpdated: extractLastUpdated($),
 		};
 	}
 }
@@ -165,28 +165,74 @@ function extractBadges(html: string): Array<string> {
 	return Array.from(badges);
 }
 
-function extractLicense($: CheerioAPI): string | null {
+/**
+ * Forge components that declare a license link out to opensource.org/licenses/X,
+ * where X is the canonical SPDX identifier. That URL is the most reliable
+ * signal — the human-readable label often says "BSD-3 license" or "GPL v2"
+ * which don't match SPDX strings directly. Fall back to scanning for an
+ * explicit SPDX identifier inside the License section if no URL is present.
+ */
+function extractLicense(html: string, $: CheerioAPI): string | null {
+	const urlMatch = html.match(
+		/opensource\.org\/licenses\/([A-Za-z0-9.+-]+?)(?=[)"'<\s]|$)/,
+	);
+	if (urlMatch) return urlMatch[1];
+
+	// Locate the "License" header, then read the immediately-following value.
 	let license: string | null = null;
-	$("span:contains('License')").each((_, el) => {
-		const block = $(el).closest("div, section, article");
-		const text = block.text().replace(/\s+/g, " ").trim();
+	$("span").each((_, el) => {
+		if ($(el).text().trim() !== "License") return;
+		const parent = $(el).closest("div");
+		const valueBlock = parent.parent().next();
+		const text = valueBlock.text().replace(/\s+/g, " ").trim();
 		const m = text.match(
-			/\b(MIT|BSD-3-Clause|BSD-2-Clause|Apache-2\.0|GPL-2\.0|GPL-3\.0|LGPL-3\.0|MPL-2\.0|EPL-2\.0|Proprietary)\b/,
+			/\b(MIT|BSD-?3-?Clause|BSD-?2-?Clause|Apache-?2\.0|GPL-?2\.0|GPL-?3\.0|LGPL-?3\.0|MPL-?2\.0|EPL-?2\.0|Proprietary)\b/i,
 		);
-		if (m && !license) license = m[1];
+		if (m) {
+			license = m[1];
+			return false;
+		}
 	});
 	return license;
 }
 
+/**
+ * Category is rendered as a `.forge-line` block whose `.forge-line__content`
+ * contains the literal text "Category"; the value sits in the immediately-
+ * following sibling. We search for the header text strictly so we don't
+ * grab "Categories" or unrelated `<span>` with "Category" inside.
+ */
 function extractCategory($: CheerioAPI): string | null {
-	const cat = $("span:contains('Category')").first().parent().next();
-	const text = cat.text().replace(/\s+/g, " ").trim();
-	return text || null;
+	let category: string | null = null;
+	$(".forge-line__content").each((_, el) => {
+		if ($(el).text().trim() !== "Category") return;
+		const value = $(el).closest(".forge-line").next();
+		const text = value.text().replace(/\s+/g, " ").trim();
+		if (text) category = text;
+		return false;
+	});
+	return category;
 }
 
+/**
+ * Author lives inside `.TabletPublishedBy` in the header — a tight element
+ * next to "Uploaded on …". Two renderings exist:
+ *
+ *   - Plain text:    `<span>OutSystems</span>`
+ *   - Profile link:  `<input type="submit" value="Guilherme Pereira"
+ *                       onclick="window.location.href='…/profile/X/overview'">`
+ *
+ * Cheerio's `.text()` skips input `value=` attributes, so we check that
+ * shape first and fall back to text.
+ */
 function extractAuthor($: CheerioAPI): string | null {
-	const a = $(".component-title__owner a, .component-title__owner").first();
-	const text = a.text().replace(/\s+/g, " ").trim();
+	const el = $(".TabletPublishedBy").first();
+	if (el.length === 0) return null;
+
+	const inputValue = el.find("input[type='submit']").first().attr("value");
+	if (inputValue?.trim()) return inputValue.trim();
+
+	const text = el.text().replace(/\s+/g, " ").trim();
 	return text || null;
 }
 
@@ -201,16 +247,39 @@ function extractRating($: CheerioAPI): number | null {
 
 /**
  * Extract the release date from the detail page header. The page renders
- * "Uploaded on <DD MMM[ YYYY]>" near the title — we match that pattern
- * directly. We deliberately avoid the page's `data-release` attributes
- * because the "Suggested components" sidebar carries the same attribute
- * and would have us picking the wrong row's date.
+ * "Uploaded on <span>DD MMM[ YYYY] (X days ago)</span>" — running a regex
+ * on the raw HTML misses it because the text is split across tags
+ * (`Uploaded<div> on <span>…`). Pull the text from the title-owner block
+ * via cheerio (which collapses nested text cleanly) and regex from there.
+ * `data-release` attributes are deliberately avoided — the suggested-
+ * components sidebar carries them too and we'd pick the wrong row's date.
  */
-function extractLastUpdated(html: string): Date | null {
-	const m = html.match(/Uploaded on (\d{1,2}\s+[A-Za-z]+(?:\s+\d{4})?)/);
+function extractLastUpdated($: CheerioAPI): Date | null {
+	const owner = $(".component-title__owner");
+	if (owner.length === 0) return null;
+	const text = owner.text().replace(/\s+/g, " ");
+	const m = text.match(/Uploaded on (\d{1,2})\s+([A-Za-z]+)(?:\s+(\d{4}))?/);
 	if (!m) return null;
-	const d = new Date(m[1]);
-	return Number.isFinite(d.getTime()) ? d : null;
+
+	const day = Number.parseInt(m[1], 10);
+	const monthName = m[2];
+	const explicitYear = m[3] ? Number.parseInt(m[3], 10) : null;
+
+	// Append the year before constructing Date — `new Date("27 Apr")` resolves
+	// to year 2001 in Node (implementation-defined for year-less inputs).
+	const candidateYear = explicitYear ?? new Date().getUTCFullYear();
+	const dateStr = `${day} ${monthName} ${candidateYear}`;
+	let d = new Date(dateStr);
+	if (!Number.isFinite(d.getTime())) return null;
+
+	// If the year wasn't in the text and we assumed "this year", but that
+	// puts the date >30 days in the future, the upload must actually be last
+	// year — Forge wouldn't surface "Uploaded on <future date>".
+	if (explicitYear === null && d.getTime() > Date.now() + 30 * 86_400_000) {
+		d = new Date(`${day} ${monthName} ${candidateYear - 1}`);
+		if (!Number.isFinite(d.getTime())) return null;
+	}
+	return d;
 }
 
 function extractGithubUrl(html: string): string | null {
