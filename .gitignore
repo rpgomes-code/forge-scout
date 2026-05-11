@@ -1,29 +1,32 @@
 # Dependencies
-node_modules/
+node_modules
 .pnp
 .pnp.js
 .yarn/cache
 .yarn/unplugged
 .yarn/build-state.yml
 .yarn/install-state.gz
-.pnpm-store/
+.pnpm-store
 
 # Build outputs
-dist/
-build/
-.vite/
-.output/
-.nitro/
-.tanstack/
-.turbo/
+dist
+dist-ssr
+.vite
+.output
+.nitro
+.tanstack
+.turbo
+.vinxi
+.wrangler
 
 # Generated route tree (TanStack Router)
 src/routeTree.gen.ts
 
 # Env files
 .env
-.env.local
 .env.*.local
+*.local
+__unconfig*
 
 # Logs
 *.log
@@ -37,14 +40,14 @@ pnpm-debug.log*
 Thumbs.db
 
 # Editors
-.vscode/
-.idea/
+.idea
 *.swp
 *.swo
 
 # Testing
-coverage/
-.nyc_output/
+coverage
+.nyc_output
 
 # Misc
 *.tsbuildinfo
+todos.json
