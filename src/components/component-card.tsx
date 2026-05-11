@@ -28,11 +28,11 @@ interface Props {
 export function ComponentCard({ component, selectable }: Props) {
 	const updated = formatRelativeDate(component.lastUpdated);
 	return (
-		<div className="relative">
+		<div className="relative h-full">
 			<Link
 				to="/component/$id"
 				params={{ id: String(component.id) }}
-				className="block rounded-xl outline-none transition focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+				className="block h-full rounded-xl outline-none transition focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
 			>
 				<Card
 					className={cn(
@@ -46,7 +46,9 @@ export function ComponentCard({ component, selectable }: Props) {
 							<div
 								className={cn(
 									"min-w-0 space-y-1",
-									selectable && "pr-8", // make room for the toggle
+									// Selection toggle lives in the top-left corner, so push
+									// the title row right enough to clear it.
+									selectable && "pl-8",
 								)}
 							>
 								<CardTitle className="truncate text-base font-semibold">
@@ -129,7 +131,7 @@ export function ComponentCard({ component, selectable }: Props) {
 							: undefined
 					}
 					className={cn(
-						"absolute top-3 right-3 inline-flex size-7 items-center justify-center rounded-full border text-xs transition",
+						"absolute top-3 left-3 inline-flex size-6 items-center justify-center rounded-full border text-xs transition",
 						selectable.isSelected
 							? "border-primary bg-primary text-primary-foreground hover:bg-primary/90"
 							: "border-input bg-background/90 backdrop-blur-sm hover:bg-accent",
