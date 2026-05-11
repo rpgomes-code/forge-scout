@@ -50,6 +50,8 @@ App will be at http://localhost:3000.
 | `npm run db:migrate` | Apply migrations |
 | `npm run db:push` | Push schema directly (dev only) |
 | `npm run db:studio` | Drizzle Studio (DB GUI) |
+| `npm run scrape` | One-shot Forge scrape (writes to `forge_components` + `scrape_runs`) |
+| `npm run scrape:cron` | Long-running worker — schedules the scrape via `node-cron` |
 
 ## Environment variables
 
@@ -62,6 +64,40 @@ See [`.env.example`](./.env.example) for the full list. Required at runtime:
 | `OPENROUTER_MODEL` | OpenRouter model id (defaults to a free model) |
 | `FORGE_SOURCE` | `scrape` or `api` — toggles how the Forge dataset is collected |
 | `GITHUB_TOKEN` | Optional GitHub PAT for higher API rate limits |
+
+## Forge scraper
+
+The scraper populates `forge_components` from one of two sources:
+
+- **`FORGE_SOURCE=scrape`** (default) — parses HTML directly from `outsystems.com/forge`.
+- **`FORGE_SOURCE=api`** — calls the unofficial Forge API (component id 3255). Currently stubbed — set this only once the API client lands.
+
+Both modes share an orchestrator that writes a `scrape_runs` audit row per invocation (status, counts, last error), polite-throttles requests, and retries on 5xx / 429 with exponential backoff.
+
+### One-off
+
+```bash
+FORGE_LIMIT=10 FORGE_DELAY_MS=1500 npm run scrape
+```
+
+### Scheduled (cron worker)
+
+```bash
+CRON_SCHEDULE="0 6,18 * * *" CRON_TZ=UTC npm run scrape:cron
+```
+
+Designed to deploy as its own Dokploy service (long-running app, start command `npm run scrape:cron`) — keeps the web server free of side-job baggage. Sharing the same `DATABASE_URL` is the only coupling.
+
+Env knobs:
+
+| Variable | Purpose | Default |
+|---|---|---|
+| `FORGE_SOURCE` | `scrape` or `api` | `scrape` |
+| `FORGE_LIMIT` | Cap components per run | unlimited |
+| `FORGE_DELAY_MS` | Per-request politeness throttle | `1000` |
+| `CRON_SCHEDULE` | Cron expression (worker only) | `0 6,18 * * *` |
+| `CRON_TZ` | Cron timezone (worker only) | `UTC` |
+| `RUN_ON_BOOT` | `true` to scrape once at worker startup | `false` |
 
 ## Deployment
 
