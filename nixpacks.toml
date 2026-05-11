@@ -1,0 +1,30 @@
+# Explicit Nixpacks build plan for Dokploy.
+#
+# Why this file exists: Dokploy's default Node auto-detection was failing the
+# build silently (container never reached running state, no service appeared
+# in `docker.getContainers`). Pinning the phases here removes ambiguity and
+# gives us a single place to debug.
+
+providers = ["node"]
+
+[variables]
+NODE_ENV = "production"
+# Force npm to honour postinstall scripts so native deps (esbuild,
+# lightningcss) compile during install. Some Nixpacks pipelines pass
+# --ignore-scripts which would break the Vite build.
+NPM_CONFIG_IGNORE_SCRIPTS = "false"
+
+[phases.setup]
+nixPkgs = ["nodejs_20", "npm-10_x"]
+
+[phases.install]
+cmds = ["npm ci --include=dev"]
+
+[phases.build]
+# Vite + tailwind 4 build. Skips tsc — type-checking lives in CI separately,
+# the production build only needs the bundle to assemble.
+cmds = ["npm run build"]
+
+[start]
+# Runs drizzle migrations (idempotent) then boots the Nitro server on :3000.
+cmd = "npm start"
