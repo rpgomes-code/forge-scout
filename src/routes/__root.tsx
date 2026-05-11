@@ -7,6 +7,8 @@ import {
 	Scripts,
 } from "@tanstack/react-router";
 import { TanStackRouterDevtoolsPanel } from "@tanstack/react-router-devtools";
+import { ThemeProvider } from "#/components/theme-provider";
+import { ThemeToggle } from "#/components/theme-toggle";
 import TanStackQueryDevtools from "../integrations/tanstack-query/devtools";
 import appCss from "../styles.css?url";
 
@@ -33,23 +35,31 @@ export const Route = createRootRouteWithContext<MyRouterContext>()({
 
 function RootDocument({ children }: { children: React.ReactNode }) {
 	return (
-		<html lang="en">
+		// suppressHydrationWarning is required: next-themes adds the `dark` class
+		// to <html> before React hydrates, which intentionally differs from the
+		// server-rendered markup.
+		<html lang="en" suppressHydrationWarning>
 			<head>
 				<HeadContent />
 			</head>
 			<body>
-				<header>
-					<div className="page-wrap flex items-center justify-between py-6">
-						<Link
-							to="/"
-							className="display-title text-2xl font-bold nav-link is-active"
-						>
-							Forge Scout
-						</Link>
-						<span className="island-kicker">scaffold</span>
-					</div>
-				</header>
-				<main className="page-wrap py-10">{children}</main>
+				<ThemeProvider>
+					<header>
+						<div className="page-wrap flex items-center justify-between py-6">
+							<Link
+								to="/"
+								className="display-title text-2xl font-bold nav-link is-active"
+							>
+								Forge Scout
+							</Link>
+							<div className="flex items-center gap-3">
+								<span className="island-kicker">scaffold</span>
+								<ThemeToggle />
+							</div>
+						</div>
+					</header>
+					<main className="page-wrap py-10">{children}</main>
+				</ThemeProvider>
 				<TanStackDevtools
 					config={{ position: "bottom-right" }}
 					plugins={[
