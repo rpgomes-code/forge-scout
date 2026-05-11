@@ -9,10 +9,9 @@ export const env = createEnv({
 		/** OpenRouter API key. Optional during scaffold work, required for LLM features. */
 		OPENROUTER_API_KEY: z.string().optional(),
 
-		/** OpenRouter model id. Defaults to a free model. */
-		OPENROUTER_MODEL: z
-			.string()
-			.default("meta-llama/llama-3.3-70b-instruct:free"),
+		/** OpenRouter model id. Default is a free model with reliable JSON-mode
+		 * output. See .env.example for alternatives. */
+		OPENROUTER_MODEL: z.string().default("z-ai/glm-4.5-air:free"),
 
 		/** Forge data source. `scrape` reads HTML; `api` calls the unofficial Forge API. */
 		FORGE_SOURCE: z.enum(["scrape", "api"]).default("scrape"),
