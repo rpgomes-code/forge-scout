@@ -1,3 +1,4 @@
+import { Link } from "@tanstack/react-router";
 import { Calendar, Download, Star } from "lucide-react";
 import {
 	Card,
@@ -16,63 +17,73 @@ interface Props {
 export function ComponentCard({ component }: Props) {
 	const updated = formatRelativeDate(component.lastUpdated);
 	return (
-		<Card className="feature-card transition">
-			<CardHeader>
-				<div className="flex items-start justify-between gap-3">
-					<div className="min-w-0 space-y-1">
-						<CardTitle className="truncate text-base font-semibold">
-							{component.name}
-						</CardTitle>
-						{component.author && (
-							<p className="text-xs text-muted-foreground">
-								by {component.author}
-							</p>
+		<Link
+			to="/component/$id"
+			params={{ id: String(component.id) }}
+			className="block rounded-xl outline-none transition focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+		>
+			<Card className="feature-card h-full transition">
+				<CardHeader>
+					<div className="flex items-start justify-between gap-3">
+						<div className="min-w-0 space-y-1">
+							<CardTitle className="truncate text-base font-semibold">
+								{component.name}
+							</CardTitle>
+							{component.author && (
+								<p className="text-xs text-muted-foreground">
+									by {component.author}
+								</p>
+							)}
+						</div>
+						{component.rating !== null && (
+							<div className="flex shrink-0 items-center gap-1 text-sm">
+								<Star className="size-4 fill-yellow-500 text-yellow-500" />
+								<span className="font-medium">
+									{component.rating.toFixed(1)}
+								</span>
+							</div>
 						)}
 					</div>
-					{component.rating !== null && (
-						<div className="flex shrink-0 items-center gap-1 text-sm">
-							<Star className="size-4 fill-yellow-500 text-yellow-500" />
-							<span className="font-medium">{component.rating.toFixed(1)}</span>
-						</div>
+
+					{component.description && (
+						<CardDescription className="line-clamp-2">
+							{component.description}
+						</CardDescription>
 					)}
-				</div>
+				</CardHeader>
 
-				{component.description && (
-					<CardDescription className="line-clamp-2">
-						{component.description}
-					</CardDescription>
-				)}
-			</CardHeader>
+				<CardContent className="space-y-3">
+					<div className="flex flex-wrap gap-1.5">
+						{component.platform.map((p) => (
+							<Pill key={p} kind="platform">
+								{p}
+							</Pill>
+						))}
+						{component.badges.map((b) => (
+							<Pill key={b} kind="badge">
+								{b}
+							</Pill>
+						))}
+						{component.license && (
+							<Pill kind="license">{component.license}</Pill>
+						)}
+					</div>
 
-			<CardContent className="space-y-3">
-				<div className="flex flex-wrap gap-1.5">
-					{component.platform.map((p) => (
-						<Pill key={p} kind="platform">
-							{p}
-						</Pill>
-					))}
-					{component.badges.map((b) => (
-						<Pill key={b} kind="badge">
-							{b}
-						</Pill>
-					))}
-					{component.license && <Pill kind="license">{component.license}</Pill>}
-				</div>
-
-				<div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
-					<span className="inline-flex items-center gap-1">
-						<Download className="size-3.5" />
-						{formatCount(component.downloads)}
-					</span>
-					{updated && (
+					<div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
 						<span className="inline-flex items-center gap-1">
-							<Calendar className="size-3.5" />
-							{updated}
+							<Download className="size-3.5" />
+							{formatCount(component.downloads)}
 						</span>
-					)}
-				</div>
-			</CardContent>
-		</Card>
+						{updated && (
+							<span className="inline-flex items-center gap-1">
+								<Calendar className="size-3.5" />
+								{updated}
+							</span>
+						)}
+					</div>
+				</CardContent>
+			</Card>
+		</Link>
 	);
 }
 

@@ -1,5 +1,5 @@
 import { createServerFn } from "@tanstack/react-start";
-import { and, desc, gte, ilike, or, type SQL, sql } from "drizzle-orm";
+import { and, desc, eq, gte, ilike, or, type SQL, sql } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "#/db/index.ts";
 import { type ForgeComponent, forgeComponents } from "#/db/schema.ts";
@@ -115,4 +115,28 @@ export const searchForgeComponents = createServerFn({ method: "GET" })
 			hasMore && last ? { downloads: last.downloads, id: last.id } : null;
 
 		return { items, nextCursor };
+	});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Detail
+// ─────────────────────────────────────────────────────────────────────────────
+
+const detailSchema = z.object({
+	id: z.number().int().positive(),
+});
+
+/**
+ * Look up one component by its Forge id. Returns `null` when no such row
+ * exists — the route loader translates that into a notFound() response so
+ * the rest of the app can rely on a non-null value.
+ */
+export const getForgeComponent = createServerFn({ method: "GET" })
+	.inputValidator(detailSchema.parse)
+	.handler(async ({ data }): Promise<ForgeComponent | null> => {
+		const rows = await db
+			.select()
+			.from(forgeComponents)
+			.where(eq(forgeComponents.id, data.id))
+			.limit(1);
+		return rows[0] ?? null;
 	});
