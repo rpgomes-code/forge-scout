@@ -13,6 +13,7 @@ import {
 	Github,
 	Star,
 } from "lucide-react";
+import { GitHubStats } from "#/components/github-stats.tsx";
 import { cn } from "#/lib/utils.ts";
 import { forgeDetailOptions, useForgeDetail } from "#/queries/forge.ts";
 
@@ -129,6 +130,8 @@ function ComponentDetail() {
 				<Stat label="Category" value={component.category ?? "Uncategorised"} />
 				<Stat label="Source" value={component.source} />
 			</section>
+
+			{component.githubUrl && <GitHubStats repoUrl={component.githubUrl} />}
 
 			{component.description && (
 				<section className="island-shell rounded-2xl p-6">
