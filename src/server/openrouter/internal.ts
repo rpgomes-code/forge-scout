@@ -55,8 +55,10 @@ export async function askForgeAI(query: string): Promise<AIResult> {
 		};
 	}
 
-	const model =
-		process.env.OPENROUTER_MODEL ?? "meta-llama/llama-3.3-70b-instruct:free";
+	// GLM 4.5 Air handles JSON-mode output reliably and tends to have spare
+	// capacity on OpenRouter's free pool. Llama 3.3 70B and Qwen3-next are
+	// also good when available, but their shared free quotas burn out fast.
+	const model = process.env.OPENROUTER_MODEL ?? "z-ai/glm-4.5-air:free";
 
 	// Pull the top-N most-downloaded components as context. Going by
 	// downloads is a reasonable proxy for "components the user is most
