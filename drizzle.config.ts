@@ -16,5 +16,10 @@ export default defineConfig({
 	dialect: "postgresql",
 	dbCredentials: {
 		url: databaseUrl,
+		// Mirror the runtime db client: encrypt without verifying the
+		// self-signed cert Dokploy's Postgres image ships with. Setting
+		// `sslmode=require` in the URL is intentionally avoided — `pg` v8
+		// treats it as `verify-full` and the connection hangs.
+		ssl: { rejectUnauthorized: false },
 	},
 });
