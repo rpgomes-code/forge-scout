@@ -6,7 +6,7 @@ const MAX_ATTEMPTS = 4;
 const BASE_BACKOFF_MS = 800;
 
 export interface FetchTextOptions {
-	/** Per-request timeout. Defaults to 20s. */
+	/** Per-request timeout. Covers the body read too, not just headers. */
 	timeoutMs?: number;
 	/** Override max attempts (default 4). */
 	maxAttempts?: number;
@@ -15,8 +15,14 @@ export interface FetchTextOptions {
 /**
  * GET a URL as text with timeouts, retries, and exponential backoff.
  *
- * Retries on network errors and HTTP 5xx / 429. Bails on 4xx (other than 429)
- * — those are permanent. Honours `Retry-After` header when present on 429.
+ * The timeout covers the full request, including reading the body — using
+ * `AbortSignal.timeout` propagates the signal to the response stream so a
+ * stalled body read aborts cleanly. Previously we cleared the timer right
+ * after the headers came back, which meant `res.text()` could hang
+ * indefinitely on a slow stream (one component took the whole scrape down).
+ *
+ * Retries on network errors and HTTP 5xx / 429. Bails on 4xx (other than
+ * 429) — those are permanent. Honours `Retry-After` on 429.
  */
 export async function fetchText(
 	url: string,
@@ -27,24 +33,22 @@ export async function fetchText(
 
 	let lastError: unknown;
 	for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-		const controller = new AbortController();
-		const timer = setTimeout(() => controller.abort(), timeoutMs);
-
 		try {
 			const res = await fetch(url, {
-				headers: { "User-Agent": USER_AGENT, Accept: "text/html,*/*" },
-				signal: controller.signal,
+				headers: {
+					"User-Agent": USER_AGENT,
+					Accept: "text/html,application/xml,*/*",
+				},
+				signal: AbortSignal.timeout(timeoutMs),
 				redirect: "follow",
 			});
 
 			if (res.ok) {
-				clearTimeout(timer);
 				return await res.text();
 			}
 
 			// 4xx (not 429) is permanent — don't retry.
 			if (res.status >= 400 && res.status < 500 && res.status !== 429) {
-				clearTimeout(timer);
 				throw new Error(`HTTP ${res.status} ${res.statusText} for ${url}`);
 			}
 
@@ -54,12 +58,10 @@ export async function fetchText(
 				? Number(retryAfterHeader) * 1000
 				: null;
 			lastError = new Error(`HTTP ${res.status} for ${url}`);
-			clearTimeout(timer);
 			if (attempt < maxAttempts) {
 				await sleep(retryAfterMs ?? backoffMs(attempt));
 			}
 		} catch (err) {
-			clearTimeout(timer);
 			lastError = err;
 			if (attempt < maxAttempts) {
 				await sleep(backoffMs(attempt));
