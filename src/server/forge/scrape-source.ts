@@ -226,7 +226,7 @@ function extractRating($: CheerioAPI): number | null {
 	// Rating widget exposes a numeric score nearby. Look for the first
 	// number in `.rating-size-m` neighbourhood.
 	const ratingEl = $(".rating-size-m, .stars-rating").first();
-	const text = ratingEl.text() + " " + ratingEl.parent().text();
+	const text = `${ratingEl.text()} ${ratingEl.parent().text()}`;
 	const m = text.match(/(\d(?:\.\d{1,2})?)\s*\/?\s*5?/);
 	if (!m) return null;
 	const n = Number.parseFloat(m[1]);
