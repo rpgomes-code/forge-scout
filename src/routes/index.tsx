@@ -1,12 +1,17 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { Suspense, useTransition } from "react";
+import { Loader2 } from "lucide-react";
+import { Suspense, useEffect, useRef, useTransition } from "react";
 import { z } from "zod";
 import { ComponentCard } from "#/components/component-card.tsx";
 import { FilterBar } from "#/components/filter-bar.tsx";
 import { SearchInput } from "#/components/search-input.tsx";
-import { forgeSearchOptions, useForgeSearch } from "#/queries/forge.ts";
+import {
+	type ForgeListFilters,
+	forgeInfiniteSearchOptions,
+	useForgeInfiniteSearch,
+} from "#/queries/forge.ts";
 
-const DEFAULT_LIMIT = 15;
+const PAGE_SIZE = 15;
 
 const searchSchema = z.object({
 	q: z.string().optional(),
@@ -17,23 +22,21 @@ const searchSchema = z.object({
 
 type RouteSearch = z.infer<typeof searchSchema>;
 
-export const Route = createFileRoute("/")({
-	validateSearch: searchSchema,
-	loaderDeps: ({ search }) => ({
+function filtersFromSearch(search: RouteSearch): ForgeListFilters {
+	return {
 		q: search.q ?? "",
 		platform: search.platform,
 		badges: search.badges,
 		minRating: search.minRating,
-	}),
+	};
+}
+
+export const Route = createFileRoute("/")({
+	validateSearch: searchSchema,
+	loaderDeps: ({ search }) => filtersFromSearch(search),
 	loader: ({ context, deps }) =>
-		context.queryClient.ensureQueryData(
-			forgeSearchOptions({
-				q: deps.q,
-				platform: deps.platform,
-				badges: deps.badges,
-				minRating: deps.minRating,
-				limit: DEFAULT_LIMIT,
-			}),
+		context.queryClient.ensureInfiniteQueryData(
+			forgeInfiniteSearchOptions(deps, PAGE_SIZE),
 		),
 	component: Home,
 });
@@ -81,40 +84,46 @@ function Home() {
 			/>
 
 			<Suspense fallback={<ResultsSkeleton />}>
-				<Results
-					q={q}
-					platform={search.platform}
-					badges={search.badges}
-					minRating={search.minRating}
-					dim={isPending}
-				/>
+				<Results filters={filtersFromSearch(search)} dim={isPending} />
 			</Suspense>
 		</div>
 	);
 }
 
 function Results({
-	q,
-	platform,
-	badges,
-	minRating,
+	filters,
 	dim,
 }: {
-	q: string;
-	platform: Array<string> | undefined;
-	badges: Array<string> | undefined;
-	minRating: number | undefined;
+	filters: ForgeListFilters;
 	dim: boolean;
 }) {
-	const { data: components } = useForgeSearch({
-		q,
-		platform,
-		badges,
-		minRating,
-		limit: DEFAULT_LIMIT,
-	});
+	const { data, fetchNextPage, hasNextPage, isFetchingNextPage } =
+		useForgeInfiniteSearch(filters, PAGE_SIZE);
 
-	if (components.length === 0) {
+	// Flatten pages into a single render list.
+	const items = data.pages.flatMap((page) => page.items);
+
+	// Sentinel-driven prefetch. The rootMargin fires the fetch well before
+	// the sentinel is visible, so by the time the user scrolls there the
+	// next page is usually already in.
+	const sentinelRef = useRef<HTMLDivElement>(null);
+	useEffect(() => {
+		const node = sentinelRef.current;
+		if (!node || !hasNextPage) return;
+
+		const observer = new IntersectionObserver(
+			(entries) => {
+				if (entries[0]?.isIntersecting && !isFetchingNextPage) {
+					void fetchNextPage();
+				}
+			},
+			{ rootMargin: "600px 0px" },
+		);
+		observer.observe(node);
+		return () => observer.disconnect();
+	}, [fetchNextPage, hasNextPage, isFetchingNextPage]);
+
+	if (items.length === 0) {
 		return (
 			<EmptyState
 				title="No components match."
@@ -124,16 +133,38 @@ function Results({
 	}
 
 	return (
-		<div
-			className={
-				"grid gap-4 transition-opacity md:grid-cols-2 lg:grid-cols-3 " +
-				(dim ? "opacity-60" : "opacity-100")
-			}
-			aria-busy={dim}
-		>
-			{components.map((component) => (
-				<ComponentCard key={component.id} component={component} />
-			))}
+		<div className="space-y-4">
+			<div
+				className={`grid gap-4 transition-opacity md:grid-cols-2 lg:grid-cols-3 ${
+					dim ? "opacity-60" : "opacity-100"
+				}`}
+				aria-busy={dim}
+			>
+				{items.map((component) => (
+					<ComponentCard key={component.id} component={component} />
+				))}
+			</div>
+
+			{hasNextPage ? (
+				<div
+					ref={sentinelRef}
+					className="flex items-center justify-center py-6 text-muted-foreground text-sm"
+				>
+					{isFetchingNextPage ? (
+						<>
+							<Loader2 className="mr-2 size-4 animate-spin" aria-hidden />
+							Loading more…
+						</>
+					) : (
+						<span className="opacity-0">scroll for more</span>
+					)}
+				</div>
+			) : (
+				<p className="py-6 text-center text-muted-foreground text-xs">
+					{items.length === 1 ? "1 component" : `${items.length} components`} —
+					end of results
+				</p>
+			)}
 		</div>
 	);
 }
