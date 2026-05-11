@@ -7,6 +7,7 @@ import {
 	Scripts,
 } from "@tanstack/react-router";
 import { TanStackRouterDevtoolsPanel } from "@tanstack/react-router-devtools";
+import { Sparkles } from "lucide-react";
 import { ThemeProvider } from "#/components/theme-provider";
 import { ThemeToggle } from "#/components/theme-toggle";
 import TanStackQueryDevtools from "../integrations/tanstack-query/devtools";
@@ -53,7 +54,13 @@ function RootDocument({ children }: { children: React.ReactNode }) {
 								Forge Scout
 							</Link>
 							<div className="flex items-center gap-3">
-								<span className="island-kicker">scaffold</span>
+								<Link
+									to="/ask"
+									className="inline-flex items-center gap-1.5 rounded-full border border-primary/40 bg-primary/5 px-3 py-1 font-medium text-primary text-xs hover:bg-primary/10"
+								>
+									<Sparkles className="size-3.5" aria-hidden />
+									Ask AI
+								</Link>
 								<ThemeToggle />
 							</div>
 						</div>
