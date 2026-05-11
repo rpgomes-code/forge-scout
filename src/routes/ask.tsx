@@ -248,23 +248,23 @@ function RankingGroup({
 	loadingComponents: boolean;
 }) {
 	return (
-		<div className="space-y-3">
+		<div className="space-y-4">
 			<h3 className="font-semibold text-base">{title}</h3>
-			<ol className="space-y-3">
+			<ol className="space-y-6">
 				{rankings.map((ranking) => {
 					const component = byId.get(ranking.id);
 					return (
 						<li
 							key={`${title}-${ranking.id}`}
-							className="grid gap-3 md:grid-cols-[1fr_auto]"
+							className="space-y-3 border-l-2 border-border pl-4 md:pl-5"
 						>
-							<div className="space-y-2">
+							<div className="space-y-1.5">
 								<ConfidenceLine confidence={ranking.confidence} />
-								<p className="text-foreground/90 leading-relaxed">
+								<p className="text-foreground/90 text-sm leading-relaxed">
 									{ranking.reason}
 								</p>
 							</div>
-							<div className="md:max-w-sm">
+							<div className="max-w-md">
 								{component ? (
 									<ComponentCard component={component} />
 								) : loadingComponents ? (
