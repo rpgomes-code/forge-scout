@@ -41,6 +41,7 @@ App will be at http://localhost:3000.
 |---|---|
 | `npm run dev` | Start dev server |
 | `npm run build` | Production build |
+| `npm start` | Run pending migrations and start the production server (used by Dokploy) |
 | `npm run preview` | Preview the production build locally |
 | `npm run test` | Run Vitest unit tests |
 | `npm run check` | Biome lint + format check |
@@ -101,14 +102,45 @@ Env knobs:
 
 ## Deployment
 
-The build produces a self-contained Node server (via Nitro):
+The build produces a self-contained Node server (via Nitro). For local production smoke-tests:
 
 ```bash
 npm run build
-node .output/server/index.mjs
+npm start          # runs `drizzle-kit migrate` then `node .output/server/index.mjs`
 ```
 
-This project targets a self-hosted VPS via [Dokploy](https://dokploy.com/).
+This project ships to a self-hosted VPS via [Dokploy](https://dokploy.com/) using a [Nixpacks](https://nixpacks.com/) build (no Dockerfile required). Two Dokploy services share the same repo:
+
+### 1. Web app — `forge-scout-web`
+
+- **Source**: GitHub repo `rpgomes-code/forge-scout`, branch `main`.
+- **Build type**: Nixpacks. `.nvmrc` pins Node 20 and `engines.node` in `package.json` reinforces it.
+- **Install command**: `npm ci`
+- **Build command**: `npm run build`
+- **Start command**: `npm start` — runs Drizzle migrations on every boot (idempotent), then starts the Nitro server on port 3000.
+- **Port**: `3000`
+- **Required env**:
+  - `DATABASE_URL` — Postgres connection string for the prod instance
+  - `OPENROUTER_API_KEY` — OpenRouter key for AI search
+- **Optional env**:
+  - `OPENROUTER_MODEL` — override the default (`z-ai/glm-4.5-air:free`)
+  - `GITHUB_TOKEN` — lifts the GitHub REST API rate limit from 60/hr to 5,000/hr
+  - `DATABASE_SSL=true` — enable when the managed Postgres requires TLS (Dokploy's default Postgres provider does)
+
+### 2. Cron worker — `forge-scout-cron`
+
+Same repo, separate Dokploy "Application" service so the long-running scrape worker doesn't share a process with the web server.
+
+- **Source**: same repo + branch.
+- **Build type**: Nixpacks (same `npm ci` + `npm run build` flow — `tsx` lives in `dependencies` so it's available at runtime).
+- **Start command**: `npm run scrape:cron`
+- **Required env**: `DATABASE_URL` (same as web).
+- **Optional env**: `CRON_SCHEDULE` (default `0 6,18 * * *`), `CRON_TZ`, `RUN_ON_BOOT=true` to scrape once on startup, `FORGE_LIMIT`, `FORGE_DELAY_MS`, `DATABASE_SSL`.
+- No exposed port — this service is headless.
+
+### Domain mapping
+
+Point a Cloudflare A record at the VPS, configure the domain in Dokploy → Domains for `forge-scout-web` with HTTPS, and Dokploy will provision Let's Encrypt automatically.
 
 ## Status
 
