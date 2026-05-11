@@ -7,6 +7,7 @@ import {
 import {
 	type ForgeCursor,
 	getForgeComponent,
+	getForgeComponentsByIds,
 	type SearchForgeParams,
 	searchForgeComponents,
 } from "#/server/forge/queries.ts";
@@ -28,6 +29,8 @@ export const forgeKeys = {
 	list: (filters: ForgeListFilters, limit: number) =>
 		[...forgeKeys.all, "list", { filters, limit }] as const,
 	detail: (id: number) => [...forgeKeys.all, "detail", id] as const,
+	batch: (ids: ReadonlyArray<number>) =>
+		[...forgeKeys.all, "batch", [...ids].sort((a, b) => a - b)] as const,
 } as const;
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -63,6 +66,18 @@ export const forgeDetailOptions = (id: number) =>
 		queryFn: () => getForgeComponent({ data: { id } }),
 	});
 
+/**
+ * Batch query options used by /compare. The query key sorts the ids so
+ * `[1, 2]` and `[2, 1]` share a cache entry — the column order is a UI
+ * concern, not a data-identity concern.
+ */
+export const forgeBatchOptions = (ids: ReadonlyArray<number>) =>
+	queryOptions({
+		queryKey: forgeKeys.batch(ids),
+		queryFn: () => getForgeComponentsByIds({ data: { ids: [...ids] } }),
+		enabled: ids.length > 0,
+	});
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Custom hooks
 // ─────────────────────────────────────────────────────────────────────────────
@@ -83,4 +98,9 @@ export function useForgeInfiniteSearch(filters: ForgeListFilters, limit = 15) {
  */
 export function useForgeDetail(id: number) {
 	return useSuspenseQuery(forgeDetailOptions(id));
+}
+
+/** Suspending batch fetch — backs the /compare route. */
+export function useForgeBatch(ids: ReadonlyArray<number>) {
+	return useSuspenseQuery(forgeBatchOptions(ids));
 }

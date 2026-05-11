@@ -1,5 +1,5 @@
-import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { Loader2 } from "lucide-react";
+import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
+import { ArrowRight, Loader2, Scale, X } from "lucide-react";
 import { Suspense, useEffect, useRef, useTransition } from "react";
 import { z } from "zod";
 import { ComponentCard } from "#/components/component-card.tsx";
@@ -12,12 +12,18 @@ import {
 } from "#/queries/forge.ts";
 
 const PAGE_SIZE = 15;
+const COMPARE_MAX = 4;
 
 const searchSchema = z.object({
 	q: z.string().optional(),
 	platform: z.array(z.string()).optional(),
 	badges: z.array(z.string()).optional(),
 	minRating: z.coerce.number().min(0).max(5).optional(),
+	/** Component IDs the user is queueing up to compare. */
+	compare: z
+		.array(z.coerce.number().int().positive())
+		.max(COMPARE_MAX)
+		.optional(),
 });
 
 type RouteSearch = z.infer<typeof searchSchema>;
@@ -47,6 +53,7 @@ function Home() {
 	const [isPending, startTransition] = useTransition();
 
 	const q = search.q ?? "";
+	const selected = search.compare ?? [];
 
 	const updateSearch = (patch: Partial<RouteSearch>) => {
 		startTransition(() => {
@@ -57,6 +64,18 @@ function Home() {
 			});
 		});
 	};
+
+	const toggleCompare = (id: number) => {
+		const isSelected = selected.includes(id);
+		const next = isSelected
+			? selected.filter((existing) => existing !== id)
+			: selected.length < COMPARE_MAX
+				? [...selected, id]
+				: selected;
+		updateSearch({ compare: next.length > 0 ? next : undefined });
+	};
+
+	const clearCompare = () => updateSearch({ compare: undefined });
 
 	return (
 		<div className="space-y-6">
@@ -84,28 +103,41 @@ function Home() {
 			/>
 
 			<Suspense fallback={<ResultsSkeleton />}>
-				<Results filters={filtersFromSearch(search)} dim={isPending} />
+				<Results
+					filters={filtersFromSearch(search)}
+					selected={selected}
+					onToggleCompare={toggleCompare}
+					dim={isPending}
+				/>
 			</Suspense>
+
+			{selected.length > 0 && (
+				<CompareTray
+					selected={selected}
+					onClear={clearCompare}
+					onRemove={toggleCompare}
+				/>
+			)}
 		</div>
 	);
 }
 
 function Results({
 	filters,
+	selected,
+	onToggleCompare,
 	dim,
 }: {
 	filters: ForgeListFilters;
+	selected: ReadonlyArray<number>;
+	onToggleCompare: (id: number) => void;
 	dim: boolean;
 }) {
 	const { data, fetchNextPage, hasNextPage, isFetchingNextPage } =
 		useForgeInfiniteSearch(filters, PAGE_SIZE);
 
-	// Flatten pages into a single render list.
 	const items = data.pages.flatMap((page) => page.items);
 
-	// Sentinel-driven prefetch. The rootMargin fires the fetch well before
-	// the sentinel is visible, so by the time the user scrolls there the
-	// next page is usually already in.
 	const sentinelRef = useRef<HTMLDivElement>(null);
 	useEffect(() => {
 		const node = sentinelRef.current;
@@ -140,9 +172,20 @@ function Results({
 				}`}
 				aria-busy={dim}
 			>
-				{items.map((component) => (
-					<ComponentCard key={component.id} component={component} />
-				))}
+				{items.map((component) => {
+					const isSelected = selected.includes(component.id);
+					return (
+						<ComponentCard
+							key={component.id}
+							component={component}
+							selectable={{
+								isSelected,
+								canSelect: selected.length < COMPARE_MAX,
+								onToggle: () => onToggleCompare(component.id),
+							}}
+						/>
+					);
+				})}
 			</div>
 
 			{hasNextPage ? (
@@ -165,6 +208,80 @@ function Results({
 					end of results
 				</p>
 			)}
+		</div>
+	);
+}
+
+/**
+ * Floating "compare tray" that lives at the bottom of the viewport while
+ * any selection is active. Shows count, lets you clear, and only enables
+ * the "Compare" CTA once 2+ components are picked.
+ */
+function CompareTray({
+	selected,
+	onClear,
+	onRemove,
+}: {
+	selected: ReadonlyArray<number>;
+	onClear: () => void;
+	onRemove: (id: number) => void;
+}) {
+	const ready = selected.length >= 2;
+	return (
+		<div className="-translate-x-1/2 fixed bottom-6 left-1/2 z-30 w-[min(620px,calc(100vw-2rem))] transform">
+			<div className="island-shell flex items-center gap-3 rounded-2xl p-3 shadow-lg">
+				<Scale className="size-4 shrink-0 text-muted-foreground" aria-hidden />
+				<p className="min-w-0 flex-1 truncate text-sm">
+					<span className="font-semibold">{selected.length}</span>{" "}
+					<span className="text-muted-foreground">
+						{selected.length === 1 ? "component" : "components"} selected
+						{ready ? "" : " · pick at least one more"}
+					</span>
+				</p>
+				<button
+					type="button"
+					onClick={onClear}
+					className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-muted-foreground text-xs hover:bg-accent hover:text-foreground"
+				>
+					<X className="size-3" aria-hidden />
+					Clear
+				</button>
+				{ready ? (
+					<Link
+						to="/compare"
+						search={{ ids: [...selected] }}
+						className="inline-flex items-center gap-1.5 rounded-md border border-primary bg-primary px-3 py-1.5 font-medium text-primary-foreground text-sm hover:bg-primary/90"
+					>
+						Compare
+						<ArrowRight className="size-3.5" aria-hidden />
+					</Link>
+				) : (
+					<button
+						type="button"
+						disabled
+						className="inline-flex cursor-not-allowed items-center gap-1.5 rounded-md border border-muted bg-muted/50 px-3 py-1.5 font-medium text-muted-foreground text-sm"
+					>
+						Compare
+						<ArrowRight className="size-3.5" aria-hidden />
+					</button>
+				)}
+			</div>
+			{/* Tiny per-component chips so the user can yank a single component
+			    without scrolling for it. */}
+			<div className="mt-2 flex flex-wrap items-center justify-center gap-1.5 text-xs">
+				{selected.map((id) => (
+					<button
+						key={id}
+						type="button"
+						onClick={() => onRemove(id)}
+						className="inline-flex items-center gap-1 rounded-full border bg-card px-2 py-0.5 hover:bg-accent"
+						aria-label={`Remove component ${id} from comparison`}
+					>
+						#{id}
+						<X className="size-3" aria-hidden />
+					</button>
+				))}
+			</div>
 		</div>
 	);
 }
@@ -204,5 +321,6 @@ function cleanSearchParams(params: RouteSearch): RouteSearch {
 	if (params.badges && params.badges.length > 0) out.badges = params.badges;
 	if (params.minRating !== undefined && params.minRating > 0)
 		out.minRating = params.minRating;
+	if (params.compare && params.compare.length > 0) out.compare = params.compare;
 	return out;
 }

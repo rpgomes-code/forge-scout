@@ -1,5 +1,15 @@
 import { createServerFn } from "@tanstack/react-start";
-import { and, desc, eq, gte, ilike, or, type SQL, sql } from "drizzle-orm";
+import {
+	and,
+	desc,
+	eq,
+	gte,
+	ilike,
+	inArray,
+	or,
+	type SQL,
+	sql,
+} from "drizzle-orm";
 import { z } from "zod";
 import { db } from "#/db/index.ts";
 import { type ForgeComponent, forgeComponents } from "#/db/schema.ts";
@@ -139,4 +149,24 @@ export const getForgeComponent = createServerFn({ method: "GET" })
 			.where(eq(forgeComponents.id, data.id))
 			.limit(1);
 		return rows[0] ?? null;
+	});
+
+const batchSchema = z.object({
+	ids: z.array(z.number().int().positive()).min(1).max(10),
+});
+
+/**
+ * Batch lookup preserving request order. Used by the /compare route to
+ * fetch 2-4 components in one round trip. Missing IDs come back as `null`
+ * in the matching slot so the consumer can render a placeholder column.
+ */
+export const getForgeComponentsByIds = createServerFn({ method: "GET" })
+	.inputValidator(batchSchema.parse)
+	.handler(async ({ data }): Promise<Array<ForgeComponent | null>> => {
+		const rows = await db
+			.select()
+			.from(forgeComponents)
+			.where(inArray(forgeComponents.id, data.ids));
+		const byId = new Map(rows.map((row) => [row.id, row]));
+		return data.ids.map((id) => byId.get(id) ?? null);
 	});
