@@ -1,5 +1,6 @@
 import { Link } from "@tanstack/react-router";
 import { Calendar, Download, Star } from "lucide-react";
+import { LicenseBadge } from "#/components/license-badge.tsx";
 import {
 	Card,
 	CardContent,
@@ -64,9 +65,7 @@ export function ComponentCard({ component }: Props) {
 								{b}
 							</Pill>
 						))}
-						{component.license && (
-							<Pill kind="license">{component.license}</Pill>
-						)}
+						{component.license && <LicenseBadge license={component.license} />}
 					</div>
 
 					<div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
@@ -91,7 +90,7 @@ export function ComponentCard({ component }: Props) {
 // Helpers
 // ─────────────────────────────────────────────────────────────────────────────
 
-type PillKind = "platform" | "badge" | "license";
+type PillKind = "platform" | "badge";
 
 function Pill({
 	kind,
@@ -108,8 +107,6 @@ function Pill({
 					"border-sky-200 bg-sky-50 text-sky-900 dark:border-sky-900/50 dark:bg-sky-950/40 dark:text-sky-200",
 				kind === "badge" &&
 					"border-emerald-200 bg-emerald-50 text-emerald-900 dark:border-emerald-900/50 dark:bg-emerald-950/40 dark:text-emerald-200",
-				kind === "license" &&
-					"border-muted-foreground/30 bg-muted/50 text-foreground/80",
 			)}
 		>
 			{children}

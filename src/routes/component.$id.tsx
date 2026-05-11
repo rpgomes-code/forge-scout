@@ -14,8 +14,11 @@ import {
 	Star,
 } from "lucide-react";
 import { GitHubStats } from "#/components/github-stats.tsx";
+import { LicenseBadge } from "#/components/license-badge.tsx";
+import { LicenseExplanation } from "#/components/license-explanation.tsx";
 import { cn } from "#/lib/utils.ts";
 import { forgeDetailOptions, useForgeDetail } from "#/queries/forge.ts";
+import { useGitHubHealth } from "#/queries/github.ts";
 
 export const Route = createFileRoute("/component/$id")({
 	loader: async ({ params, context }) => {
@@ -40,6 +43,10 @@ function ComponentDetail() {
 	// Loader guarantees this is non-null, but the query type allows null —
 	// fall through to notFound for safety.
 	if (!component) throw notFound();
+
+	// GitHub health is cheap to hook here too (same cache key as GitHubStats
+	// below — React Query dedupes). We need the SPDX for license cross-check.
+	const { data: githubHealth } = useGitHubHealth(component.githubUrl);
 
 	const forgeUrl = `https://www.outsystems.com/forge/component-overview/${component.id}/${component.slug}`;
 	const updated = formatRelativeDate(component.lastUpdated);
@@ -89,7 +96,9 @@ function ComponentDetail() {
 							{b}
 						</Pill>
 					))}
-					{component.license && <Pill kind="license">{component.license}</Pill>}
+					{component.license && (
+						<LicenseBadge license={component.license} size="full" />
+					)}
 				</div>
 
 				<div className="flex flex-wrap gap-3">
@@ -130,6 +139,11 @@ function ComponentDetail() {
 				<Stat label="Category" value={component.category ?? "Uncategorised"} />
 				<Stat label="Source" value={component.source} />
 			</section>
+
+			<LicenseExplanation
+				forgeLicense={component.license}
+				githubLicense={githubHealth?.spdxLicense}
+			/>
 
 			{component.githubUrl && <GitHubStats repoUrl={component.githubUrl} />}
 
@@ -212,7 +226,7 @@ function Stat({
 	);
 }
 
-type PillKind = "platform" | "badge" | "license" | "tag";
+type PillKind = "platform" | "badge" | "tag";
 
 function Pill({
 	kind,
@@ -229,8 +243,6 @@ function Pill({
 					"border-sky-200 bg-sky-50 text-sky-900 dark:border-sky-900/50 dark:bg-sky-950/40 dark:text-sky-200",
 				kind === "badge" &&
 					"border-emerald-200 bg-emerald-50 text-emerald-900 dark:border-emerald-900/50 dark:bg-emerald-950/40 dark:text-emerald-200",
-				kind === "license" &&
-					"border-muted-foreground/30 bg-muted/50 text-foreground/80",
 				kind === "tag" && "border-input bg-background text-foreground/80",
 			)}
 		>
