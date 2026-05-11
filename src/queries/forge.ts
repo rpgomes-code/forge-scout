@@ -1,34 +1,53 @@
-import { queryOptions, useSuspenseQuery } from "@tanstack/react-query";
 import {
+	infiniteQueryOptions,
+	useSuspenseInfiniteQuery,
+} from "@tanstack/react-query";
+import {
+	type ForgeCursor,
 	type SearchForgeParams,
 	searchForgeComponents,
 } from "#/server/forge/queries.ts";
+
+/** Filter slice of `SearchForgeParams` — everything that lives in the URL. */
+export type ForgeListFilters = Omit<SearchForgeParams, "cursor" | "limit">;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Query key factory
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * Centralised query keys for the Forge resource. Use these everywhere —
- * never inline arrays — so invalidation can target the right slice
- * (`queryClient.invalidateQueries({ queryKey: forgeKeys.all })` wipes the
- * lot; `forgeKeys.detail(id)` invalidates one component, etc.).
+ * Centralised query keys for the Forge resource. The infinite list key is
+ * the filter set (NOT including the cursor — that's the pageParam). Two
+ * pages of the same filtered list share one cache entry.
  */
 export const forgeKeys = {
 	all: ["forge"] as const,
-	list: (params: SearchForgeParams) =>
-		[...forgeKeys.all, "list", params] as const,
+	list: (filters: ForgeListFilters, limit: number) =>
+		[...forgeKeys.all, "list", { filters, limit }] as const,
 	detail: (id: number) => [...forgeKeys.all, "detail", id] as const,
 } as const;
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Query options factories — pass to useQuery / useSuspenseQuery / prefetch
+// Query options factories
 // ─────────────────────────────────────────────────────────────────────────────
 
-export const forgeSearchOptions = (params: SearchForgeParams) =>
-	queryOptions({
-		queryKey: forgeKeys.list(params),
-		queryFn: () => searchForgeComponents({ data: params }),
+/**
+ * Infinite-query options for the Forge listing. Sharing the same factory
+ * between the route loader (`ensureInfiniteQueryData`) and the component
+ * hook (`useSuspenseInfiniteQuery`) is what lets SSR pre-populate page 1.
+ */
+export const forgeInfiniteSearchOptions = (
+	filters: ForgeListFilters,
+	limit = 15,
+) =>
+	infiniteQueryOptions({
+		queryKey: forgeKeys.list(filters, limit),
+		queryFn: ({ pageParam }) =>
+			searchForgeComponents({
+				data: { ...filters, limit, cursor: pageParam },
+			}),
+		initialPageParam: null as ForgeCursor | null,
+		getNextPageParam: (lastPage) => lastPage.nextCursor,
 	});
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -36,9 +55,9 @@ export const forgeSearchOptions = (params: SearchForgeParams) =>
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * Suspending search hook. Throws a promise on first call — wrap callers in
- * a `<Suspense>` boundary. Refetches on key change.
+ * Suspending infinite search hook. Wrap callers in a `<Suspense>` boundary.
+ * Returns `{ data, fetchNextPage, hasNextPage, isFetchingNextPage, ... }`.
  */
-export function useForgeSearch(params: SearchForgeParams) {
-	return useSuspenseQuery(forgeSearchOptions(params));
+export function useForgeInfiniteSearch(filters: ForgeListFilters, limit = 15) {
+	return useSuspenseInfiniteQuery(forgeInfiniteSearchOptions(filters, limit));
 }

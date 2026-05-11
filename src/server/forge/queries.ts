@@ -2,7 +2,19 @@ import { createServerFn } from "@tanstack/react-start";
 import { and, desc, gte, ilike, or, type SQL, sql } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "#/db/index.ts";
-import { forgeComponents } from "#/db/schema.ts";
+import { type ForgeComponent, forgeComponents } from "#/db/schema.ts";
+
+/**
+ * Cursor for infinite scroll. We sort by `(downloads desc, id desc)` so
+ * the cursor needs both columns to give a stable, unambiguous "after this
+ * row" point — two components can share a download count.
+ */
+export const cursorSchema = z.object({
+	downloads: z.number().int().nonnegative(),
+	id: z.number().int().positive(),
+});
+
+export type ForgeCursor = z.infer<typeof cursorSchema>;
 
 export const searchForgeSchema = z.object({
 	/** Free-text query — matched against name, description, slug. */
@@ -13,29 +25,34 @@ export const searchForgeSchema = z.object({
 	badges: z.array(z.string()).optional(),
 	/** Filter to components with rating >= this value. Null ratings excluded. */
 	minRating: z.number().min(0).max(5).optional(),
-	/** Max rows returned. Capped server-side to avoid runaway queries. */
-	limit: z.number().int().positive().max(100).default(15),
+	/** Page cursor — `null`/omitted for the first page. */
+	cursor: cursorSchema.nullable().optional(),
+	/** Page size. Capped server-side. */
+	limit: z.number().int().positive().max(50).default(15),
 });
 
 export type SearchForgeParams = z.infer<typeof searchForgeSchema>;
 
+export interface SearchForgeResult {
+	items: Array<ForgeComponent>;
+	/** `null` when there are no more pages. */
+	nextCursor: ForgeCursor | null;
+}
+
 /**
- * Free-text + filter search over Forge components. Empty inputs return all
- * rows ordered by descending downloads (default "most popular" view).
+ * Paged free-text + filter search over Forge components. Each call returns
+ * one page plus a cursor for the next page.
  *
- * Filter semantics:
- * - `platform` / `badges`: array overlap (`&&`). Selecting multiple values
- *   widens the result set — "show me anything matching ANY of these tags".
- * - `minRating`: `rating >= minRating`. Null ratings are excluded.
- * - `q`: ILIKE over name / description / slug.
+ * Ordering: `downloads DESC, id DESC`. Most-popular first; `id` is the
+ * tie-breaker so the cursor is unambiguous when two components share a
+ * download count.
  *
- * Postgres handles this volume fine; if cardinality grows we'll switch to
- * a tsvector full-text column for `q` and add GIN indexes on the arrays.
+ * Filter semantics are the same as before — see `searchForgeSchema`.
  */
 export const searchForgeComponents = createServerFn({ method: "GET" })
 	.inputValidator(searchForgeSchema.parse)
-	.handler(async ({ data }) => {
-		const { q, platform, badges, minRating, limit } = data;
+	.handler(async ({ data }): Promise<SearchForgeResult> => {
+		const { q, platform, badges, minRating, cursor, limit } = data;
 		const conditions: Array<SQL> = [];
 
 		const trimmed = q.trim();
@@ -71,9 +88,31 @@ export const searchForgeComponents = createServerFn({ method: "GET" })
 			conditions.push(gte(forgeComponents.rating, minRating));
 		}
 
+		if (cursor) {
+			// (downloads, id) < (cursor.downloads, cursor.id) — Postgres tuple
+			// comparison gives us the "strictly after this row in (desc, desc)
+			// order" semantics in a single index-friendly predicate.
+			conditions.push(
+				sql`(${forgeComponents.downloads}, ${forgeComponents.id}) < (${cursor.downloads}, ${cursor.id})`,
+			);
+		}
+
 		const where = conditions.length > 0 ? and(...conditions) : undefined;
 
-		const query = db.select().from(forgeComponents);
-		const filtered = where ? query.where(where) : query;
-		return await filtered.orderBy(desc(forgeComponents.downloads)).limit(limit);
+		// Fetch one extra row so we can tell whether there's another page
+		// without a second COUNT query.
+		const query = db
+			.select()
+			.from(forgeComponents)
+			.orderBy(desc(forgeComponents.downloads), desc(forgeComponents.id))
+			.limit(limit + 1);
+		const rows = await (where ? query.where(where) : query);
+
+		const hasMore = rows.length > limit;
+		const items = hasMore ? rows.slice(0, limit) : rows;
+		const last = items[items.length - 1];
+		const nextCursor: ForgeCursor | null =
+			hasMore && last ? { downloads: last.downloads, id: last.id } : null;
+
+		return { items, nextCursor };
 	});
