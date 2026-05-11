@@ -20,18 +20,28 @@ function getDatabaseUrl(): string {
 }
 
 /**
- * Encrypt traffic without verifying the cert chain — equivalent to libpq's
- * `sslmode=require`. Dokploy's Postgres image ships with a self-signed cert,
- * so chain verification fails. Putting `sslmode=require` in the URL doesn't
- * work either: `pg` v8 treats it as `verify-full`. Programmatic config is
- * the canonical way.
+ * Decide pg's `ssl` option from `DATABASE_SSL` env.
  *
- * Flip `rejectUnauthorized` to `true` once we deploy behind a Postgres with
- * a CA-signed cert.
+ * The Dokploy Postgres template image (`postgres:17`) ships with SSL
+ * **disabled** server-side, so any client SSL attempt errors with "The
+ * server does not support SSL connections." We default to no SSL and
+ * surface an opt-in env var so the toggle is a config change — not a
+ * code change — once the server has TLS configured.
+ *
+ * When enabled, we use `rejectUnauthorized: false` (libpq's
+ * `sslmode=require` semantics) because typical self-hosted Postgres
+ * deployments use self-signed certs. Flip to `true` once you're behind a
+ * CA-signed cert.
  */
+function getSslOption(): false | { rejectUnauthorized: false } {
+	return process.env.DATABASE_SSL === "true"
+		? { rejectUnauthorized: false }
+		: false;
+}
+
 const pool = new Pool({
 	connectionString: getDatabaseUrl(),
-	ssl: { rejectUnauthorized: false },
+	ssl: getSslOption(),
 });
 
 export const db = drizzle(pool, { schema });

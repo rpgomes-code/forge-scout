@@ -10,16 +10,22 @@ if (!databaseUrl) {
 	);
 }
 
+/**
+ * Mirror the runtime db client (`src/db/index.ts`). Dokploy's default
+ * Postgres image has SSL disabled server-side, so we default to no SSL and
+ * accept an opt-in toggle via `DATABASE_SSL=true`. When enabled, we accept
+ * self-signed certs since most self-hosted Postgres deployments don't have
+ * CA-signed certs.
+ */
+const ssl =
+	process.env.DATABASE_SSL === "true" ? { rejectUnauthorized: false } : false;
+
 export default defineConfig({
 	out: "./drizzle",
 	schema: "./src/db/schema.ts",
 	dialect: "postgresql",
 	dbCredentials: {
 		url: databaseUrl,
-		// Mirror the runtime db client: encrypt without verifying the
-		// self-signed cert Dokploy's Postgres image ships with. Setting
-		// `sslmode=require` in the URL is intentionally avoided — `pg` v8
-		// treats it as `verify-full` and the connection hangs.
-		ssl: { rejectUnauthorized: false },
+		ssl,
 	},
 });
